@@ -1,0 +1,20 @@
+# FPGA build artifacts
+fpga/output/*.bit
+fpga/output/*.hwh
+fpga/output/vivado_project/
+fpga/generated/*.v
+
+# OCaml/dune build
+fpga/hardcaml/_build/
+
+# Rust build
+software/e131-bridge/target/
+
+# IDE
+.vscode/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db

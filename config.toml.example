@@ -1,0 +1,58 @@
+# E1.31 to WS2812 Bridge Configuration
+#
+# This file configures the mapping from E1.31/sACN universes to
+# WS2812 LED strip outputs on the PYNQ-Z2.
+
+# FPGA AXI-Lite base address (default for Zynq GP0)
+fpga_base_addr = 0x43C00000
+
+# Target frame rate in Hz
+target_fps = 40
+
+# Each [[outputs]] block defines one WS2812 output channel.
+# - channel: FPGA output index (0-7, maps to PMODA pins)
+# - universes: E1.31 universe numbers that feed this output (in order)
+# - pixel_count: Total number of pixels on this strip
+#
+# Each universe carries 170 RGB pixels (510 DMX channels).
+# Use multiple universes for strips longer than 170 pixels.
+
+[[outputs]]
+channel = 0
+universes = [1, 2, 3]
+pixel_count = 510
+
+[[outputs]]
+channel = 1
+universes = [4, 5, 6]
+pixel_count = 510
+
+[[outputs]]
+channel = 2
+universes = [7, 8, 9]
+pixel_count = 510
+
+[[outputs]]
+channel = 3
+universes = [10, 11, 12]
+pixel_count = 510
+
+[[outputs]]
+channel = 4
+universes = [13, 14, 15]
+pixel_count = 510
+
+[[outputs]]
+channel = 5
+universes = [16, 17, 18]
+pixel_count = 510
+
+[[outputs]]
+channel = 6
+universes = [19, 20, 21]
+pixel_count = 510
+
+[[outputs]]
+channel = 7
+universes = [22, 23, 24]
+pixel_count = 510

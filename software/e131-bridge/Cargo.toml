@@ -1,0 +1,20 @@
+[package]
+name = "e131-bridge"
+version = "0.1.0"
+edition = "2021"
+description = "E1.31/sACN to FPGA WS2812 bridge daemon for PYNQ-Z2"
+
+[dependencies]
+sacn = "0.11"
+libc = "0.2"
+clap = { version = "4", features = ["derive"] }
+log = "0.4"
+env_logger = "0.11"
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+signal-hook = "0.3"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true

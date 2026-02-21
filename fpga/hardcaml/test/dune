@@ -1,0 +1,4 @@
+(executable
+ (name test_ws2812)
+ (libraries ws2812_controller hardcaml hardcaml_waveterm)
+ (preprocess (pps ppx_hardcaml ppx_jane)))

@@ -1,0 +1,4 @@
+(library
+ (name ws2812_controller)
+ (libraries hardcaml hardcaml_axi)
+ (preprocess (pps ppx_hardcaml ppx_jane)))
