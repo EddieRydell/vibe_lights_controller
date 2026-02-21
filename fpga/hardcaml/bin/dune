@@ -1,4 +1,4 @@
 (executable
  (name generate)
- (libraries ws2812_controller hardcaml)
+ (libraries ws2812_controller hardcaml unix)
  (preprocess (pps ppx_hardcaml ppx_jane)))

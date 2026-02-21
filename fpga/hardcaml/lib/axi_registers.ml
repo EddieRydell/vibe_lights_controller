@@ -17,7 +17,7 @@ open Signal
 
     Address decoding:
     - Bits [15:12] select region: 0 = control regs, 1-8 = channel data
-    - For control regs, bits [3:2] select the register
+    - For control regs, bits [4:2] select the register
     - For channel data, bits [11:2] select the pixel word index
 *)
 
@@ -127,11 +127,9 @@ let create (scope : Scope.t) (axi : _ Axi_lite.I.t) (from_ws : _ From_ws2812.t) 
   let buf_waddr = Always.Variable.reg spec ~enable:vdd ~width:10 in
   let buf_wdata = Always.Variable.reg spec ~enable:vdd ~width:32 in
   (* Address decoding helpers *)
-  let wr_region = sel wr_addr.value 15 12 in
-  let wr_reg_sel = sel wr_addr.value 4 2 in  (* 3 bits: selects registers at 0x00-0x1C *)
-  let wr_pixel_idx = sel wr_addr.value 11 2 in
-  let _rd_region = sel rd_addr.value 15 12 in
-  let _rd_reg_sel = sel rd_addr.value 4 2 in
+  let wr_region = select wr_addr.value 15 12 in
+  let wr_reg_sel = select wr_addr.value 4 2 in
+  let wr_pixel_idx = select wr_addr.value 11 2 in
   Always.(
     compile
       [ (* Default: clear one-shot signals *)
@@ -158,9 +156,9 @@ let create (scope : Scope.t) (axi : _ Axi_lite.I.t) (from_ws : _ From_ws2812.t) 
                               ; start_pulse <-- bit axi.wdata 0
                               ] )
                           ; ( of_int ~width:3 2  (* 0x08: PIX_COUNT *)
-                            , [ pix_count_reg <-- sel axi.wdata 9 0 ] )
+                            , [ pix_count_reg <-- select axi.wdata 9 0 ] )
                           ; ( of_int ~width:3 3  (* 0x0C: CH_ENABLE *)
-                            , [ ch_enable_reg <-- sel axi.wdata 7 0 ] )
+                            , [ ch_enable_reg <-- select axi.wdata 7 0 ] )
                           ]
                       ]
                       [ (* Channel data space: region 1-8 maps to channel 0-7 *)
@@ -193,25 +191,24 @@ let create (scope : Scope.t) (axi : _ Axi_lite.I.t) (from_ws : _ From_ws2812.t) 
                   [ rd_addr <-- axi.araddr
                   ; (* Decode read address and set read data *)
                     if_
-                      (sel axi.araddr 15 12 ==:. 0)
+                      (select axi.araddr 15 12 ==:. 0)
                       [ (* Control register space: decode bits [4:2] *)
                         switch
-                          (sel axi.araddr 4 2)
+                          (select axi.araddr 4 2)
                           [ ( of_int ~width:3 0  (* 0x00: CTRL *)
-                            , [ rd_data <-- uresize ~width:32 ctrl_reg.value ] )
+                            , [ rd_data <-- uresize ctrl_reg.value 32 ] )
                           ; ( of_int ~width:3 1  (* 0x04: STATUS *)
                             , [ rd_data
                                 <-- uresize
-                                      ~width:32
-                                      (from_ws.done_ @: from_ws.busy)
+                                      (from_ws.done_ @: from_ws.busy) 32
                               ] )
                           ; ( of_int ~width:3 2  (* 0x08: PIX_COUNT *)
                             , [ rd_data
-                                <-- uresize ~width:32 pix_count_reg.value
+                                <-- uresize pix_count_reg.value 32
                               ] )
                           ; ( of_int ~width:3 3  (* 0x0C: CH_ENABLE *)
                             , [ rd_data
-                                <-- uresize ~width:32 ch_enable_reg.value
+                                <-- uresize ch_enable_reg.value 32
                               ] )
                           ; ( of_int ~width:3 4  (* 0x10: VERSION *)
                             , [ rd_data <--. version_id ] )

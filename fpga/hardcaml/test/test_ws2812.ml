@@ -1,6 +1,5 @@
 open! Base
 open Hardcaml
-open Hardcaml_waveterm
 open Ws2812_controller
 
 (** Cycle-accurate simulation tests for the WS2812 controller.
@@ -166,4 +165,4 @@ let%expect_test "ws2812_bit_timing" =
     {| T1H measured: 80 cycles (expected ~80, tolerance ±15): PASS |}]
 ;;
 
-let () = Stdlib.Printf.printf "All WS2812 tests complete.\n"
+(* Tests run via: dune runtest *)

@@ -12,7 +12,6 @@ open Signal
 *)
 
 let max_pixels = 1024
-let addr_bits = 10  (* log2(1024) *)
 
 module Write_port = struct
   type 'a t =
@@ -38,25 +37,27 @@ module O = struct
 end
 
 let create (_scope : Scope.t) (write : _ Write_port.t) (read : _ Read_port.t) =
-  let open Signal in
-  (* Simple dual-port RAM: one write port, one read port *)
-  let read_data =
+  (* Simple dual-port RAM: one write port, one read port.
+     Ram.create uses Hardcaml.Write_port.t and Hardcaml.Read_port.t records. *)
+  let read_data_arr =
     Ram.create
       ~collision_mode:Read_before_write
       ~size:max_pixels
-      ~write_port:
-        { write_clock = write.clock
-        ; write_address = write.write_addr
-        ; write_data = write.write_data
-        ; write_enable = write.write_enable
-        }
-      ~read_port:
-        { read_clock = read.clock
-        ; read_address = read.read_addr
-        ; read_enable = read.read_enable
-        }
+      ~write_ports:
+        [| { Hardcaml.Write_port.write_clock = write.clock
+           ; write_address = write.write_addr
+           ; write_data = write.write_data
+           ; write_enable = write.write_enable
+           }
+        |]
+      ~read_ports:
+        [| { Hardcaml.Read_port.read_clock = read.clock
+           ; read_address = read.read_addr
+           ; read_enable = read.read_enable
+           }
+        |]
       ()
   in
   (* Extract lower 24 bits (GRB data) from the 32-bit stored word *)
-  { O.read_data = sel read_data 23 0 }
+  { O.read_data = select read_data_arr.(0) 23 0 }
 ;;
