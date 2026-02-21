@@ -13,16 +13,23 @@
 ##############################################################################
 
 set project_name "ws2812_pynq"
-set project_dir  [file normalize "../../output/vivado_project"]
-set gen_dir      [file normalize "../../generated"]
-set constraints  [file normalize "../constraints/pynq_z2.xdc"]
-set output_dir   [file normalize "../../output"]
+
+# Derive paths relative to this script's location
+set script_dir   [file dirname [file normalize [info script]]]
+set project_dir  [file normalize "$script_dir/../../output/vivado_project"]
+set gen_dir      [file normalize "$script_dir/../../generated"]
+set constraints  [file normalize "$script_dir/../constraints/pynq_z2.xdc"]
+set output_dir   [file normalize "$script_dir/../../output"]
+
+puts "Script dir: $script_dir"
+puts "Project dir: $project_dir"
+puts "Generated dir: $gen_dir"
+puts "Constraints: $constraints"
 
 # Step 1: Create project
 create_project $project_name $project_dir -part xc7z020clg400-1 -force
 
-# Set board part (PYNQ-Z2) — requires board files installed
-# TUL PYNQ-Z2 board file identifier
+# Set board part (PYNQ-Z2)
 set_property board_part tul.com.tw:pynq-z2:part0:1.0 [current_project]
 
 # Step 2: Add generated Verilog source
@@ -30,12 +37,25 @@ add_files -norecurse [file normalize "$gen_dir/ws2812_top.v"]
 update_compile_order -fileset sources_1
 
 # Step 3: Create block design
-create_bd_design "system"
+# Workaround: Vivado 2024.1 has a bug where xxv_ethernet rules.tcl fails to
+# initialize, causing create_bd_design to report failure even though the BD
+# file is created successfully. We catch the error and verify the BD exists.
+if {[catch {create_bd_design "system"} err]} {
+    puts "WARNING: create_bd_design reported: $err"
+    puts "Checking if BD was created despite the error..."
+    if {[llength [get_bd_designs -quiet system]] == 0} {
+        error "Block design 'system' was NOT created. Cannot continue."
+    }
+    puts "Block design 'system' exists — continuing."
+}
 
 # Add Zynq PS7 and apply board preset
 create_bd_cell -type ip -vlnv xilinx.com:ip:processing_system7:5.5 ps7
-apply_board_connection -board_interface "ddr" -ip_intf "ps7/DDR" -diagram "system"
-apply_board_connection -board_interface "fixed_io" -ip_intf "ps7/FIXED_IO" -diagram "system"
+
+# Apply board preset to PS7 (configures DDR, MIO, clocks for PYNQ-Z2)
+apply_bd_automation -rule xilinx.com:bd_rule:processing_system7 \
+    -config {make_external "FIXED_IO, DDR" apply_board_preset "1"} \
+    [get_bd_cells ps7]
 
 # Configure PS7: enable M_AXI_GP0, set FCLK_CLK0 to 100 MHz
 set_property -dict [list \
@@ -64,6 +84,10 @@ connect_bd_net [get_bd_pins ps7/FCLK_CLK0] \
     [get_bd_pins axi_interconnect_0/M00_ACLK] \
     [get_bd_pins proc_sys_reset_0/slowest_sync_clk]
 
+# Connect PS clock to GP0 AXI clock
+connect_bd_net [get_bd_pins ps7/FCLK_CLK0] \
+    [get_bd_pins ps7/M_AXI_GP0_ACLK]
+
 # Connect resets
 connect_bd_net [get_bd_pins ps7/FCLK_RESET0_N] \
     [get_bd_pins proc_sys_reset_0/ext_reset_in]
@@ -73,8 +97,7 @@ connect_bd_net [get_bd_pins proc_sys_reset_0/peripheral_aresetn] \
     [get_bd_pins axi_interconnect_0/S00_ARESETN] \
     [get_bd_pins axi_interconnect_0/M00_ARESETN]
 
-# Note: ws2812_top uses active-high clear (not aresetn).
-# Invert the reset for it.
+# ws2812_top uses active-high clear — invert the reset
 create_bd_cell -type ip -vlnv xilinx.com:ip:util_vector_logic:2.0 reset_inv
 set_property -dict [list \
     CONFIG.C_SIZE {1} \
@@ -85,46 +108,12 @@ connect_bd_net [get_bd_pins proc_sys_reset_0/peripheral_aresetn] \
 connect_bd_net [get_bd_pins reset_inv/Res] \
     [get_bd_pins ws2812_top_0/clear]
 
-# Connect AXI interfaces
+# Connect AXI interfaces — use interface-level connections
+# Vivado auto-inferred 's_axi' AXI interface on ws2812_top
 connect_bd_intf_net [get_bd_intf_pins ps7/M_AXI_GP0] \
     [get_bd_intf_pins axi_interconnect_0/S00_AXI]
-
-# Connect AXI interconnect master to WS2812 slave signals manually
-# (since ws2812_top doesn't use standard AXI interface naming from hardcaml)
-connect_bd_net [get_bd_pins axi_interconnect_0/M00_AXI_awaddr] \
-    [get_bd_pins ws2812_top_0/s_axi_awaddr]
-connect_bd_net [get_bd_pins axi_interconnect_0/M00_AXI_awvalid] \
-    [get_bd_pins ws2812_top_0/s_axi_awvalid]
-connect_bd_net [get_bd_pins axi_interconnect_0/M00_AXI_awready] \
-    [get_bd_pins ws2812_top_0/s_axi_awready]
-connect_bd_net [get_bd_pins axi_interconnect_0/M00_AXI_wdata] \
-    [get_bd_pins ws2812_top_0/s_axi_wdata]
-connect_bd_net [get_bd_pins axi_interconnect_0/M00_AXI_wstrb] \
-    [get_bd_pins ws2812_top_0/s_axi_wstrb]
-connect_bd_net [get_bd_pins axi_interconnect_0/M00_AXI_wvalid] \
-    [get_bd_pins ws2812_top_0/s_axi_wvalid]
-connect_bd_net [get_bd_pins axi_interconnect_0/M00_AXI_wready] \
-    [get_bd_pins ws2812_top_0/s_axi_wready]
-connect_bd_net [get_bd_pins axi_interconnect_0/M00_AXI_bresp] \
-    [get_bd_pins ws2812_top_0/s_axi_bresp]
-connect_bd_net [get_bd_pins axi_interconnect_0/M00_AXI_bvalid] \
-    [get_bd_pins ws2812_top_0/s_axi_bvalid]
-connect_bd_net [get_bd_pins axi_interconnect_0/M00_AXI_bready] \
-    [get_bd_pins ws2812_top_0/s_axi_bready]
-connect_bd_net [get_bd_pins axi_interconnect_0/M00_AXI_araddr] \
-    [get_bd_pins ws2812_top_0/s_axi_araddr]
-connect_bd_net [get_bd_pins axi_interconnect_0/M00_AXI_arvalid] \
-    [get_bd_pins ws2812_top_0/s_axi_arvalid]
-connect_bd_net [get_bd_pins axi_interconnect_0/M00_AXI_arready] \
-    [get_bd_pins ws2812_top_0/s_axi_arready]
-connect_bd_net [get_bd_pins axi_interconnect_0/M00_AXI_rdata] \
-    [get_bd_pins ws2812_top_0/s_axi_rdata]
-connect_bd_net [get_bd_pins axi_interconnect_0/M00_AXI_rresp] \
-    [get_bd_pins ws2812_top_0/s_axi_rresp]
-connect_bd_net [get_bd_pins axi_interconnect_0/M00_AXI_rvalid] \
-    [get_bd_pins ws2812_top_0/s_axi_rvalid]
-connect_bd_net [get_bd_pins axi_interconnect_0/M00_AXI_rready] \
-    [get_bd_pins ws2812_top_0/s_axi_rready]
+connect_bd_intf_net [get_bd_intf_pins axi_interconnect_0/M00_AXI] \
+    [get_bd_intf_pins ws2812_top_0/s_axi]
 
 # Make WS2812 output pins external
 make_bd_pins_external [get_bd_pins ws2812_top_0/ws2812_out]
@@ -132,8 +121,24 @@ set_property name ws2812_out [get_bd_ports ws2812_out_0]
 
 # Assign address: ws2812_top at 0x43C0_0000, 64 KB range
 assign_bd_address
-set_property offset 0x43C00000 [get_bd_addr_segs {ps7/Data/SEG_ws2812_top_0*}]
-set_property range 64K [get_bd_addr_segs {ps7/Data/SEG_ws2812_top_0*}]
+# Debug: list all address segments to find the right name
+puts "Address segments:"
+foreach seg [get_bd_addr_segs] {
+    puts "  $seg"
+}
+# Set address — use wildcard that matches the auto-generated segment name
+set segs [get_bd_addr_segs -quiet {ps7/Data/SEG_ws2812_top_0*}]
+if {[llength $segs] == 0} {
+    # Try alternative naming
+    set segs [get_bd_addr_segs -quiet {*/SEG_ws2812*}]
+}
+if {[llength $segs] == 0} {
+    puts "WARNING: Could not find ws2812 address segments by name."
+    puts "Using assign_bd_address defaults."
+} else {
+    set_property offset 0x43C00000 $segs
+    set_property range 64K $segs
+}
 
 # Validate and save block design
 validate_bd_design
