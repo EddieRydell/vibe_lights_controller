@@ -2,10 +2,10 @@ open! Base
 open Hardcaml
 open Signal
 
-(** 8-channel WS2812 wrapper.
+(** 8-channel WS2812/SK6812 wrapper.
 
     Instantiates 8x ws2812_serializer + 8x pixel_buffer.
-    Fans out shared control signals (start, pixel_count).
+    Each channel has its own pixel count and RGBW mode setting.
     Collects individual busy/done into aggregate status.
 
     Uses HardCaml wires to resolve the circular dependency between
@@ -20,7 +20,8 @@ module I = struct
     { clock : 'a
     ; clear : 'a
     ; start : 'a  (** Pulse to trigger all enabled channels *)
-    ; pixel_count : 'a [@bits 10]  (** Pixels per channel *)
+    ; pixel_counts : 'a list [@length 8] [@bits 10]  (** Per-channel pixel counts *)
+    ; pixel_format : 'a [@bits 8]  (** Per-channel RGBW mode bitmask *)
     ; channel_enable : 'a [@bits 8]  (** Bitmask of active channels *)
     ; (* Pixel buffer write interface — active channel selected externally *)
       buf_write_enable : 'a [@bits 8]  (** Per-channel write enable *)
@@ -49,10 +50,12 @@ let create (scope : Scope.t) (i : _ I.t) =
     let ch_enabled = bit i.channel_enable ch in
     let ch_start = i.start &: ch_enabled in
     let ch_write_en = bit i.buf_write_enable ch in
+    let ch_pixel_count = List.nth_exn i.pixel_counts ch in
+    let ch_rgbw_mode = bit i.pixel_format ch in
     (* Use wires to break the circular dependency:
        serializer needs pixel_data (from buffer read port),
        buffer needs read_addr and read_enable (from serializer). *)
-    let pixel_data_wire = wire 24 in
+    let pixel_data_wire = wire 32 in
     (* Create serializer — pixel_data is a wire, assigned after buffer creation *)
     let ser_out =
       Ws2812_serializer.create
@@ -60,8 +63,9 @@ let create (scope : Scope.t) (i : _ I.t) =
         { Ws2812_serializer.I.clock = i.clock
         ; clear = i.clear
         ; start = ch_start
-        ; pixel_count = i.pixel_count
+        ; pixel_count = ch_pixel_count
         ; pixel_data = pixel_data_wire
+        ; rgbw_mode = ch_rgbw_mode
         }
     in
     (* Create pixel buffer — uses serializer's read_addr/read_enable *)

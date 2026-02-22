@@ -1,14 +1,14 @@
 open! Base
 open Hardcaml
-open Signal
 
 (** Dual-port pixel data storage.
 
     Port A: AXI write side — 32-bit words addressed by AXI bus offset.
-    Port B: Serializer read side — 24-bit pixel data addressed by pixel index.
+    Port B: Serializer read side — 32-bit pixel data addressed by pixel index.
 
-    Each pixel is stored as a 32-bit word with the lower 24 bits containing
-    GRB data. Maximum 1024 pixels per channel (limited by 4 KB address space).
+    Each pixel is stored as a 32-bit word. For RGB mode the lower 24 bits
+    contain color data; for RGBW mode all 32 bits are used.
+    Maximum 1024 pixels per channel (limited by 4 KB address space).
 *)
 
 let max_pixels = 1024
@@ -33,7 +33,7 @@ module Read_port = struct
 end
 
 module O = struct
-  type 'a t = { read_data : 'a [@bits 24] } [@@deriving hardcaml]
+  type 'a t = { read_data : 'a [@bits 32] } [@@deriving hardcaml]
 end
 
 let create (_scope : Scope.t) (write : _ Write_port.t) (read : _ Read_port.t) =
@@ -58,6 +58,6 @@ let create (_scope : Scope.t) (write : _ Write_port.t) (read : _ Read_port.t) =
         |]
       ()
   in
-  (* Extract lower 24 bits (GRB data) from the 32-bit stored word *)
-  { O.read_data = select read_data_arr.(0) 23 0 }
+  (* Return full 32 bits — serializer handles RGB vs RGBW alignment *)
+  { O.read_data = read_data_arr.(0) }
 ;;

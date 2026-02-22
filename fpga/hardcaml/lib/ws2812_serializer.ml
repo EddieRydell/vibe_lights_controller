@@ -2,7 +2,7 @@ open! Base
 open Hardcaml
 open Signal
 
-(** WS2812 single-channel serializer.
+(** WS2812/SK6812 single-channel serializer with RGBW support.
 
     Timing constants at 100 MHz clock:
     - T0H (0-bit high): 400ns = 40 cycles
@@ -12,7 +12,8 @@ open Signal
     - Bit period:       1.25us = 125 cycles
     - Reset pulse:      >=50us = >=5000 cycles
 
-    State machine: IDLE -> RESET_PULSE -> SEND_BIT (24 bits/pixel, MSB first, GRB) -> DONE
+    Supports both 24-bit (RGB/GRB) and 32-bit (RGBW) pixel modes.
+    State machine: IDLE -> RESET_PULSE -> SEND_BIT (24 or 32 bits/pixel, MSB first) -> DONE
 *)
 
 (* Timing constants for 100 MHz clock *)
@@ -20,7 +21,6 @@ let t0h_cycles = 40
 let t1h_cycles = 80
 let bit_period_cycles = 125
 let reset_cycles = 5000
-let bits_per_pixel = 24
 let max_pixels = 680
 
 module I = struct
@@ -28,8 +28,9 @@ module I = struct
     { clock : 'a
     ; clear : 'a
     ; start : 'a  (** Pulse high to begin transmission *)
-    ; pixel_count : 'a [@bits 10]  (** Number of pixels to transmit (1-680) *)
-    ; pixel_data : 'a [@bits 24]  (** GRB pixel data from buffer read port *)
+    ; pixel_count : 'a [@bits 10]  (** Number of pixels to transmit (1-1024) *)
+    ; pixel_data : 'a [@bits 32]  (** Pixel data from buffer read port (32-bit) *)
+    ; rgbw_mode : 'a  (** 1 = 32-bit RGBW pixels, 0 = 24-bit RGB/GRB pixels *)
     }
   [@@deriving hardcaml]
 end
@@ -65,15 +66,19 @@ let create (scope : Scope.t) (i : _ I.t) =
   let sm = Always.State_machine.create (module State) spec ~enable:vdd in
   (* Counters *)
   let cycle_count = Always.Variable.reg spec ~enable:vdd ~width:13 in
-  let bit_index = Always.Variable.reg spec ~enable:vdd ~width:5 in
+  let bit_index = Always.Variable.reg spec ~enable:vdd ~width:6 in
   let pixel_index = Always.Variable.reg spec ~enable:vdd ~width:10 in
-  let pixel_shift_reg = Always.Variable.reg spec ~enable:vdd ~width:24 in
+  let pixel_shift_reg = Always.Variable.reg spec ~enable:vdd ~width:32 in
   let ws2812_out = Always.Variable.reg spec ~enable:vdd ~width:1 in
   let read_addr = Always.Variable.reg spec ~enable:vdd ~width:10 in
   let read_enable = Always.Variable.reg spec ~enable:vdd ~width:1 in
   let done_flag = Always.Variable.reg spec ~enable:vdd ~width:1 in
-  (* Compute high-time based on current bit value *)
-  let current_bit = bit pixel_shift_reg.value 23 in
+  (* Latch rgbw_mode at start so it stays stable during transmission *)
+  let rgbw_latch = Always.Variable.reg spec ~enable:vdd ~width:1 in
+  (* Dynamic bits per pixel: 32 for RGBW, 24 for RGB *)
+  let bits_per_pixel_sig = mux2 rgbw_latch.value (of_int ~width:6 32) (of_int ~width:6 24) in
+  (* Compute high-time based on current bit value (MSB of 32-bit shift register) *)
+  let current_bit = bit pixel_shift_reg.value 31 in
   let high_time =
     mux2 current_bit
       (of_int ~width:13 t1h_cycles)
@@ -97,13 +102,19 @@ let create (scope : Scope.t) (i : _ I.t) =
                   ; done_flag <--. 0
                   ; read_addr <--. 0
                   ; read_enable <--. 1
+                  ; rgbw_latch <-- i.rgbw_mode
                   ; sm.set_next Load_pixel
                   ]
               ] )
           ; ( State.Load_pixel
             , [ read_enable <--. 0
-              ; (* Data available this cycle from the read we issued *)
-                pixel_shift_reg <-- i.pixel_data
+              ; (* Data available this cycle from the read we issued.
+                   In RGBW mode, use all 32 bits.
+                   In RGB mode, left-align 24 bits into top of 32-bit register. *)
+                if_
+                  rgbw_latch.value
+                  [ pixel_shift_reg <-- i.pixel_data ]
+                  [ pixel_shift_reg <-- (concat_msb [select i.pixel_data 23 0; zero 8]) ]
               ; bit_index <--. 0
               ; sm.set_next Send_bit_high
               ] )
@@ -126,7 +137,7 @@ let create (scope : Scope.t) (i : _ I.t) =
               ; pixel_shift_reg <-- sll pixel_shift_reg.value 1
               ; bit_index <-- bit_index.value +:. 1
               ; if_
-                  (bit_index.value ==:. bits_per_pixel - 1)
+                  (bit_index.value ==: uresize bits_per_pixel_sig 6 -:. 1)
                   [ sm.set_next Next_pixel ]
                   [ sm.set_next Send_bit_high ]
               ] )

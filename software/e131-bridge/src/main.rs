@@ -3,7 +3,7 @@ mod fpga_io;
 mod sacn_receiver;
 
 use clap::Parser;
-use config::Config;
+use config::{Config, PixelType};
 use fpga_io::FpgaRegisters;
 use log::{error, info, warn};
 use sacn_receiver::E131Receiver;
@@ -75,15 +75,25 @@ fn main() {
         fpga.read_version()
     );
 
-    // Compute and set maximum pixel count across all outputs
-    let max_pixels = config
+    // Set per-channel pixel counts
+    for output in &config.outputs {
+        fpga.set_channel_pixel_count(output.channel, output.pixel_count);
+        info!(
+            "Channel {}: {} pixels, {:?}, {:?}",
+            output.channel, output.pixel_count, output.color_order, output.pixel_type
+        );
+    }
+
+    // Compute and set pixel format mask (RGBW channels)
+    let pix_fmt_mask: u8 = config
         .outputs
         .iter()
-        .map(|o| o.pixel_count)
-        .max()
-        .unwrap_or(1);
-    fpga.set_pixel_count(max_pixels);
-    info!("Max pixels per channel: {}", max_pixels);
+        .filter(|o| o.pixel_type == PixelType::Rgbw)
+        .fold(0u8, |mask, o| mask | (1 << o.channel));
+    fpga.set_pixel_format(pix_fmt_mask);
+    if pix_fmt_mask != 0 {
+        info!("RGBW pixel format mask: 0b{:08b}", pix_fmt_mask);
+    }
 
     // Set channel enable mask
     let ch_enable: u8 = config.outputs.iter().fold(0u8, |mask, o| mask | (1 << o.channel));
@@ -148,9 +158,14 @@ fn main() {
         // Write pixel data to FPGA for each configured output
         if receiver.any_dirty() {
             for output in &config.outputs {
-                let rgb_data =
-                    receiver.assemble_channel_data(&output.universes, output.pixel_count);
-                fpga.write_pixels_bulk(output.channel, &rgb_data);
+                let bpp = output.pixel_type.bytes_per_pixel();
+                let pixel_data = receiver.assemble_channel_data(
+                    &output.universes,
+                    output.pixel_count,
+                    bpp,
+                );
+                let rgbw = output.pixel_type == PixelType::Rgbw;
+                fpga.write_pixels_bulk(output.channel, &pixel_data, output.color_order, rgbw);
             }
             receiver.clear_dirty();
 

@@ -1,3 +1,4 @@
+use crate::config::ColorOrder;
 use std::ptr;
 
 /// FPGA register offsets (from AXI-Lite base address).
@@ -6,6 +7,31 @@ const REG_STATUS: usize = 0x0004;
 const REG_PIX_COUNT: usize = 0x0008;
 const REG_CH_ENABLE: usize = 0x000C;
 const REG_VERSION: usize = 0x0010;
+
+/// Per-channel pixel count registers (v2.0.0+).
+const REG_CH0_PIX_COUNT: usize = 0x0014;
+const REG_CH1_PIX_COUNT: usize = 0x0018;
+const REG_CH2_PIX_COUNT: usize = 0x001C;
+const REG_CH3_PIX_COUNT: usize = 0x0020;
+const REG_CH4_PIX_COUNT: usize = 0x0024;
+const REG_CH5_PIX_COUNT: usize = 0x0028;
+const REG_CH6_PIX_COUNT: usize = 0x002C;
+const REG_CH7_PIX_COUNT: usize = 0x0030;
+
+/// Per-channel pixel format register (bit N=1 -> channel N uses 32-bit RGBW).
+const REG_PIX_FMT: usize = 0x0034;
+
+/// Per-channel pixel count register offsets, indexed by channel number.
+const CH_PIX_COUNT_REGS: [usize; 8] = [
+    REG_CH0_PIX_COUNT,
+    REG_CH1_PIX_COUNT,
+    REG_CH2_PIX_COUNT,
+    REG_CH3_PIX_COUNT,
+    REG_CH4_PIX_COUNT,
+    REG_CH5_PIX_COUNT,
+    REG_CH6_PIX_COUNT,
+    REG_CH7_PIX_COUNT,
+];
 
 /// Channel data base offsets: channel N data starts at 0x1000 * (N+1).
 const CH_DATA_BASE: usize = 0x1000;
@@ -92,33 +118,66 @@ impl FpgaRegisters {
         }
     }
 
-    /// Write a single pixel's GRB data to a channel's pixel buffer.
+    /// Write a single pixel's data to a channel's pixel buffer.
     ///
-    /// `channel`: 0-7, `index`: pixel index, `grb`: packed 24-bit GRB value.
-    pub fn write_pixel(&self, channel: u8, index: u16, grb: u32) {
+    /// `channel`: 0-7, `index`: pixel index, `value`: packed pixel value
+    /// (24-bit for RGB, 32-bit for RGBW).
+    pub fn write_pixel(&self, channel: u8, index: u16, value: u32) {
         let offset = CH_DATA_BASE + (channel as usize) * CH_DATA_STRIDE + (index as usize) * 4;
-        self.write_reg(offset, grb & 0x00FF_FFFF);
+        self.write_reg(offset, value);
     }
 
-    /// Write a full channel's pixel data from a byte slice of RGB triplets.
+    /// Write a full channel's pixel data from a byte slice with configurable color order.
     ///
-    /// The input `rgb_data` is a flat array of [R, G, B, R, G, B, ...].
-    /// This function converts RGB to GRB ordering as required by WS2812.
-    pub fn write_pixels_bulk(&self, channel: u8, rgb_data: &[u8]) {
-        let pixel_count = rgb_data.len() / 3;
+    /// For RGB mode: `data` is [R, G, B, R, G, B, ...] (or whatever the sACN source sends).
+    /// For RGBW mode: `data` is [R, G, B, W, R, G, B, W, ...].
+    ///
+    /// Color reordering is done in software based on `color_order`.
+    pub fn write_pixels_bulk(
+        &self,
+        channel: u8,
+        data: &[u8],
+        color_order: ColorOrder,
+        rgbw: bool,
+    ) {
+        let bytes_per_pixel = if rgbw { 4 } else { 3 };
+        let pixel_count = data.len() / bytes_per_pixel;
+        let base_offset = CH_DATA_BASE + (channel as usize) * CH_DATA_STRIDE;
+
         for i in 0..pixel_count {
-            let r = rgb_data[i * 3] as u32;
-            let g = rgb_data[i * 3 + 1] as u32;
-            let b = rgb_data[i * 3 + 2] as u32;
-            // WS2812 expects GRB order
-            let grb = (g << 16) | (r << 8) | b;
-            self.write_pixel(channel, i as u16, grb);
+            let off = i * bytes_per_pixel;
+            let r = data[off] as u32;
+            let g = data[off + 1] as u32;
+            let b = data[off + 2] as u32;
+
+            let (c1, c2, c3) = color_order.reorder(r as u8, g as u8, b as u8);
+            let packed = if rgbw {
+                let w = data[off + 3] as u32;
+                ((c1 as u32) << 24) | ((c2 as u32) << 16) | ((c3 as u32) << 8) | w
+            } else {
+                ((c1 as u32) << 16) | ((c2 as u32) << 8) | (c3 as u32)
+            };
+
+            let offset = base_offset + i * 4;
+            self.write_reg(offset, packed);
         }
     }
 
-    /// Set the pixel count register (applies to all channels).
+    /// Set the global pixel count register (backward compat — sets CH0 pixel count).
     pub fn set_pixel_count(&self, count: u16) {
         self.write_reg(REG_PIX_COUNT, count as u32);
+    }
+
+    /// Set the pixel count for a specific channel (v2.0.0+).
+    pub fn set_channel_pixel_count(&self, channel: u8, count: u16) {
+        assert!(channel < 8, "Channel must be 0-7");
+        self.write_reg(CH_PIX_COUNT_REGS[channel as usize], count as u32);
+    }
+
+    /// Set the pixel format register (per-channel RGBW mode bitmask).
+    /// Bit N = 1 means channel N uses 32-bit RGBW pixels.
+    pub fn set_pixel_format(&self, mask: u8) {
+        self.write_reg(REG_PIX_FMT, mask as u32);
     }
 
     /// Set the channel enable bitmask.

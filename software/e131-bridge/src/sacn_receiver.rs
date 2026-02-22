@@ -5,8 +5,11 @@ use std::net::SocketAddr;
 /// Maximum DMX channels per universe.
 const DMX_CHANNELS_PER_UNIVERSE: usize = 512;
 
-/// Pixels per universe (512 channels / 3 channels per pixel = 170 pixels).
-pub const PIXELS_PER_UNIVERSE: usize = 170;
+/// Pixels per universe for RGB (512 channels / 3 channels per pixel = 170 pixels).
+pub const PIXELS_PER_UNIVERSE_RGB: usize = 170;
+
+/// Pixels per universe for RGBW (512 channels / 4 channels per pixel = 128 pixels).
+pub const PIXELS_PER_UNIVERSE_RGBW: usize = 128;
 
 /// Per-universe DMX data buffer.
 pub struct UniverseData {
@@ -103,23 +106,27 @@ impl E131Receiver {
 
     /// Assemble pixel data for a given output channel from its configured universes.
     ///
-    /// Returns a Vec<u8> of RGB triplets assembled from the universe data.
-    /// Each universe contributes up to 170 pixels (510 DMX channels).
+    /// Returns a Vec<u8> of pixel data assembled from the universe data.
+    /// `bytes_per_pixel`: 3 for RGB, 4 for RGBW.
+    /// Each universe contributes up to 170 pixels (RGB) or 128 pixels (RGBW).
     pub fn assemble_channel_data(
         &self,
         universes: &[u16],
         pixel_count: u16,
+        bytes_per_pixel: usize,
     ) -> Vec<u8> {
-        let total_bytes = pixel_count as usize * 3;
+        let total_bytes = pixel_count as usize * bytes_per_pixel;
         let mut result = vec![0u8; total_bytes];
         let mut offset = 0;
+
+        let pixels_per_universe = DMX_CHANNELS_PER_UNIVERSE / bytes_per_pixel;
 
         for &universe in universes {
             if offset >= total_bytes {
                 break;
             }
             if let Some(udata) = self.universe_data.get(&universe) {
-                let available = udata.len.min(PIXELS_PER_UNIVERSE * 3);
+                let available = udata.len.min(pixels_per_universe * bytes_per_pixel);
                 let copy_len = available.min(total_bytes - offset);
                 result[offset..offset + copy_len].copy_from_slice(&udata.data[..copy_len]);
                 offset += copy_len;

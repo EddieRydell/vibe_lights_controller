@@ -1,0 +1,28 @@
+# E1.31/sACN to FPGA WS2812 Bridge Configuration (v2.0.0)
+
+fpga_base_addr = 0x43C00000
+target_fps = 40
+
+# WS2812 strip — 300 pixels, GRB color order (default)
+[[outputs]]
+channel = 0
+universes = [1, 2]
+pixel_count = 300
+color_order = "GRB"
+pixel_type = "Rgb"
+
+# SK6812 RGBW strip — 144 pixels, GRB color order
+[[outputs]]
+channel = 1
+universes = [4, 5]
+pixel_count = 144
+color_order = "GRB"
+pixel_type = "Rgbw"
+
+# Short WS2812 strip — 60 pixels, single universe
+[[outputs]]
+channel = 2
+universes = [6]
+pixel_count = 60
+color_order = "GRB"
+pixel_type = "Rgb"
